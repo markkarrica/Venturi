@@ -7,11 +7,15 @@ document covers building, testing and packaging from the repository.
 ## Dependencies
 
 - **Rust** 1.88 or newer (edition 2024, let chains) — [rustup.rs](https://rustup.rs)
-- **FFmpeg** (development headers/libs + `pkg-config`, for `ffmpeg-next`, the
-  binding used for decode/encode)
+- **FFmpeg** 9.x development headers and libraries (for `ffmpeg-next`, the
+  binding used for decode/encode). Prefer a build that includes **libx264**
+  (GPL): needed for export and proxies. On Linux/macOS, `pkg-config` finds
+  them; on Windows, set `FFMPEG_DIR` instead (see below).
 - **clang/libclang** (for `ffmpeg-next`'s bindgen)
-- **Wayland/X11 + Vulkan** (for `eframe`/`wgpu`, the UI and the GPU compositor)
-- **ALSA** (for `cpal`, the audio)
+- **A graphics stack for `eframe`/`wgpu`**: Wayland or X11 plus Vulkan on
+  Linux; Metal on macOS; Direct3D 12 (default) or Vulkan on Windows
+- **An audio backend for `cpal`**: ALSA on Linux; CoreAudio on macOS; WASAPI
+  on Windows (ships with the OS)
 
 On Fedora (including Asahi Remix):
 
@@ -42,6 +46,63 @@ sudo apt install \
   libvulkan-dev mesa-vulkan-drivers \
   libasound2-dev
 ```
+
+### Windows
+
+Windows is less regularly tested than Linux and macOS: there is no packaging
+script or CI job yet, and some features are Unix-only (the MCP attach socket,
+see [MCP.md](MCP.md)). The crates themselves are expected to compile with the
+MSVC toolchain.
+
+Install:
+
+1. **Visual Studio Build Tools** (or Visual Studio) with the
+   "Desktop development with C++" workload — the MSVC linker and Windows SDK.
+2. **Rust** for the host triple `x86_64-pc-windows-msvc`
+   (`rustup default stable-x86_64-pc-windows-msvc`).
+3. **LLVM** (for `libclang`, used by bindgen), e.g.
+   `winget install LLVM.LLVM`. Use the **x64** install.
+4. **FFmpeg 9.x shared development build** with headers, import libs and
+   DLLs. A full shared package from
+   [gyan.dev](https://www.gyan.dev/ffmpeg/builds/) (or the matching
+   [GitHub mirror](https://github.com/GyanD/codexffmpeg/releases)) works:
+   pick `ffmpeg-*-full_build-shared` so `include/`, `lib/` and `bin/` sit
+   under one prefix. The release AppImage/macOS scripts pin `n9.0.1`; any
+   9.x shared build that `ffmpeg-next` 9 accepts is fine.
+
+In PowerShell, point the build at FFmpeg and clang, then build:
+
+```powershell
+# Adjust the two paths to your installs.
+$env:FFMPEG_DIR = "C:\ffmpeg"
+$env:LIBCLANG_PATH = "C:\Program Files\LLVM\bin"
+$env:Path = "$env:FFMPEG_DIR\bin;$env:LIBCLANG_PATH;$env:Path"
+
+cargo build -p vv-app
+cargo run -p vv-app
+```
+
+`FFMPEG_DIR` must contain `include\` and `lib\` (the import libraries). The
+FFmpeg DLLs in `bin\` must stay on `PATH`, or be copied next to
+`target\debug\vv-app.exe` / `target\release\vv-app.exe`, or the process
+fails to start.
+
+**vcpkg alternative.** Instead of a gyan package:
+
+```powershell
+git clone https://github.com/microsoft/vcpkg C:\vcpkg
+C:\vcpkg\bootstrap-vcpkg.bat
+C:\vcpkg\vcpkg.exe install ffmpeg[core,avcodec,avformat,avutil,swscale,swresample,x264]:x64-windows
+$env:FFMPEG_DIR = "C:\vcpkg\installed\x64-windows"
+$env:Path = "$env:FFMPEG_DIR\bin;$env:Path"
+```
+
+Enable the `x264` feature (GPL) so export and proxies can encode H.264. Set
+`LIBCLANG_PATH` as above before `cargo build`.
+
+At runtime, `wgpu` uses Direct3D 12 by default; a working GPU driver is
+enough. Hardware decode settings still expose NVDEC/Vulkan (the Linux path);
+D3D11VA is not wired yet.
 
 ### libav version
 
@@ -80,8 +141,9 @@ cargo run -p vv-app
 ```
 
 A working graphics backend is required at runtime (Vulkan on Linux, through
-`mesa-vulkan-drivers` or the proprietary GPU driver): without one, `wgpu`
-finds no adapter and the window does not open.
+`mesa-vulkan-drivers` or the proprietary GPU driver; Metal on macOS;
+Direct3D 12 on Windows): without one, `wgpu` finds no adapter and the window
+does not open.
 
 `vv-app mcp` runs the MCP server for AI agents instead of the window, and
 `vv-app --mcp` opens the window with it on: see [MCP.md](MCP.md).
